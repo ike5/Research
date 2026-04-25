@@ -9,10 +9,54 @@ from django.db.models import Count, Q
 import markdown as md_lib
 
 from .models import Category, Entry, EntryLink, Report, Tag, ChatSession, ChatMessage
-from .forms import EntryInputForm, EntryConfirmForm, EntryLinkForm, ReportForm, ChatSessionForm
+from .forms import (
+    EntryInputForm,
+    EntryConfirmForm,
+    EntryLinkForm,
+    ReportForm,
+    ChatSessionForm,
+)
+
+
+def _classify_to_json(
+    result, content, source_url, source, provider, tags_prefill, form_errors=None
+):
+    category = Category.objects.filter(slug=result.category).first()
+    categories = [
+        {"pk": c.pk, "slug": c.slug, "name": c.name, "icon": c.icon, "color": c.color}
+        for c in Category.objects.all()
+    ]
+    return JsonResponse(
+        {
+            "ok": True,
+            "suggested_title": result.suggested_title,
+            "content": content,
+            "category_slug": result.category,
+            "category_pk": category.pk if category else None,
+            "category_name": category.name if category else result.category,
+            "category_color": category.color if category else "secondary",
+            "category_icon": category.icon if category else "",
+            "source": source,
+            "source_url": source_url or "",
+            "classification_reasoning": result.reasoning,
+            "confidence": result.confidence,
+            "suggested_tags": ", ".join(result.suggested_tags),
+            "tags_prefill": tags_prefill or "",
+            "provider": provider,
+            "categories": categories,
+        }
+    )
+
+
+def _form_errors_json(form):
+    errors = {}
+    for field, errs in form.errors.items():
+        errors[field] = [str(e) for e in errs]
+    return errors
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
 
 def _extract_content(data: dict) -> tuple[str, str, str]:
     """Return (content, source_url, inferred_source) from cleaned form data."""
@@ -25,11 +69,13 @@ def _extract_content(data: dict) -> tuple[str, str, str]:
 
     if file_path:
         from ingest.file_loader import load_file
+
         content = load_file(file_path)
         return content, url, file_path
 
     if url:
         from ingest.url_loader import load_url
+
         content, _ = load_url(url)
         return content, url, url
 
@@ -39,28 +85,40 @@ def _extract_content(data: dict) -> tuple[str, str, str]:
 def _save_tags(entry: Entry, tags_raw: str):
     """Parse comma-separated tags and attach to entry."""
     for name in [t.strip() for t in tags_raw.split(",") if t.strip()]:
-        tag, _ = Tag.objects.get_or_create(name=name, defaults={"slug": name.lower().replace(" ", "-")[:50]})
+        tag, _ = Tag.objects.get_or_create(
+            name=name, defaults={"slug": name.lower().replace(" ", "-")[:50]}
+        )
         entry.tags.add(tag)
 
 
 # ── Home ───────────────────────────────────────────────────────────────────────
 
+
 def home(request):
-    categories = Category.objects.annotate(entry_count=Count("entries")).order_by("name")
-    recent_entries = Entry.objects.select_related("category").order_by("-created_at")[:8]
+    categories = Category.objects.annotate(entry_count=Count("entries")).order_by(
+        "name"
+    )
+    recent_entries = Entry.objects.select_related("category").order_by("-created_at")[
+        :8
+    ]
     recent_reports = Report.objects.order_by("-created_at")[:5]
     total_entries = Entry.objects.count()
     total_reports = Report.objects.count()
-    return render(request, "core/home.html", {
-        "categories": categories,
-        "recent_entries": recent_entries,
-        "recent_reports": recent_reports,
-        "total_entries": total_entries,
-        "total_reports": total_reports,
-    })
+    return render(
+        request,
+        "core/home.html",
+        {
+            "categories": categories,
+            "recent_entries": recent_entries,
+            "recent_reports": recent_reports,
+            "total_entries": total_entries,
+            "total_reports": total_reports,
+        },
+    )
 
 
 # ── Entry list / category ──────────────────────────────────────────────────────
+
 
 class EntryListView(ListView):
     model = Entry
@@ -95,18 +153,27 @@ class EntryListView(ListView):
 
 def category_view(request, slug):
     category = get_object_or_404(Category, slug=slug)
-    entries = Entry.objects.filter(category=category).select_related("category").prefetch_related("tags")
-    return render(request, "core/entry_list.html", {
-        "entries": entries,
-        "active_category": category,
-        "q": "",
-        "current_category": slug,
-        "current_tag": "",
-        "tags": Tag.objects.order_by("name"),
-    })
+    entries = (
+        Entry.objects.filter(category=category)
+        .select_related("category")
+        .prefetch_related("tags")
+    )
+    return render(
+        request,
+        "core/entry_list.html",
+        {
+            "entries": entries,
+            "active_category": category,
+            "q": "",
+            "current_category": slug,
+            "current_tag": "",
+            "tags": Tag.objects.order_by("name"),
+        },
+    )
 
 
 # ── Entry add (two-step) ───────────────────────────────────────────────────────
+
 
 def entry_add(request):
     if request.method == "POST":
@@ -117,37 +184,86 @@ def entry_add(request):
             form = EntryInputForm(request.POST)
             if form.is_valid():
                 try:
-                    content, source_url, inferred_source = _extract_content(form.cleaned_data)
+                    content, source_url, inferred_source = _extract_content(
+                        form.cleaned_data
+                    )
                     if not content:
-                        messages.error(request, "Could not extract content. Check your input.")
-                        return render(request, "core/entry_add.html", {"step": "1", "form": form})
+                        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                            return JsonResponse(
+                                {
+                                    "ok": False,
+                                    "error": "Could not extract content. Check your input.",
+                                },
+                                status=400,
+                            )
+                        messages.error(
+                            request, "Could not extract content. Check your input."
+                        )
+                        return render(
+                            request, "core/entry_add.html", {"step": "1", "form": form}
+                        )
 
                     title = form.cleaned_data.get("title", "").strip()
-                    source = form.cleaned_data.get("source", "").strip() or inferred_source
+                    source = (
+                        form.cleaned_data.get("source", "").strip() or inferred_source
+                    )
                     provider = form.cleaned_data.get("llm_provider", "openai")
 
                     from agents.classifier import classify_entry
-                    result = classify_entry(title=title or "Untitled", content=content, source=source, provider=provider)
+
+                    result = classify_entry(
+                        title=title or "Untitled",
+                        content=content,
+                        source=source,
+                        provider=provider,
+                    )
+
+                    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                        return _classify_to_json(
+                            result,
+                            content,
+                            source_url,
+                            source,
+                            provider,
+                            form.cleaned_data.get("tags", ""),
+                        )
 
                     category = Category.objects.filter(slug=result.category).first()
-                    confirm_form = EntryConfirmForm(initial={
-                        "title": result.suggested_title or title,
-                        "content": content,
-                        "category": category,
-                        "source": source,
-                        "source_url": source_url,
-                        "classification_reasoning": result.reasoning,
-                    })
-                    return render(request, "core/entry_add.html", {
-                        "step": "2",
-                        "confirm_form": confirm_form,
-                        "result": result,
-                        "provider": provider,
-                        "tags_prefill": form.cleaned_data.get("tags", ""),
-                        "category_color": category.color if category else "secondary",
-                    })
+                    confirm_form = EntryConfirmForm(
+                        initial={
+                            "title": result.suggested_title or title,
+                            "content": content,
+                            "category": category,
+                            "source": source,
+                            "source_url": source_url,
+                            "classification_reasoning": result.reasoning,
+                        }
+                    )
+                    return render(
+                        request,
+                        "core/entry_add.html",
+                        {
+                            "step": "2",
+                            "confirm_form": confirm_form,
+                            "result": result,
+                            "provider": provider,
+                            "tags_prefill": form.cleaned_data.get("tags", ""),
+                            "category_color": category.color
+                            if category
+                            else "secondary",
+                        },
+                    )
                 except Exception as exc:
+                    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                        return JsonResponse(
+                            {"ok": False, "error": str(exc)}, status=500
+                        )
                     messages.error(request, f"Classification failed: {exc}")
+            else:
+                if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                    return JsonResponse(
+                        {"ok": False, "errors": _form_errors_json(form)}, status=400
+                    )
             return render(request, "core/entry_add.html", {"step": "1", "form": form})
 
         # ── Step 2: save ──────────────────────────────────────────────────────
@@ -162,6 +278,7 @@ def entry_add(request):
                 _save_tags(entry, request.POST.get("tags_input", ""))
 
                 from utils.md_writer import write_entry_md
+
                 entry.md_filepath = str(write_entry_md(entry))
                 entry.save(update_fields=["md_filepath"])
 
@@ -169,18 +286,23 @@ def entry_add(request):
                 return redirect("core:entry_detail", pk=entry.pk)
 
             # Re-render step 2 with errors
-            return render(request, "core/entry_add.html", {
-                "step": "2",
-                "confirm_form": confirm_form,
-                "provider": request.POST.get("provider", ""),
-                "tags_prefill": request.POST.get("tags_input", ""),
-            })
+            return render(
+                request,
+                "core/entry_add.html",
+                {
+                    "step": "2",
+                    "confirm_form": confirm_form,
+                    "provider": request.POST.get("provider", ""),
+                    "tags_prefill": request.POST.get("tags_input", ""),
+                },
+            )
 
     form = EntryInputForm()
     return render(request, "core/entry_add.html", {"step": "1", "form": form})
 
 
 # ── Entry detail / edit / delete ───────────────────────────────────────────────
+
 
 class EntryDetailView(DetailView):
     model = Entry
@@ -189,9 +311,15 @@ class EntryDetailView(DetailView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         entry = self.object
-        ctx["outgoing_links"] = entry.outgoing_links.select_related("to_entry__category")
-        ctx["incoming_links"] = entry.incoming_links.select_related("from_entry__category")
-        ctx["content_html"] = md_lib.markdown(entry.content, extensions=["fenced_code", "tables"])
+        ctx["outgoing_links"] = entry.outgoing_links.select_related(
+            "to_entry__category"
+        )
+        ctx["incoming_links"] = entry.incoming_links.select_related(
+            "from_entry__category"
+        )
+        ctx["content_html"] = md_lib.markdown(
+            entry.content, extensions=["fenced_code", "tables"]
+        )
         return ctx
 
 
@@ -203,21 +331,29 @@ def entry_edit(request, pk):
             entry = form.save()
             _save_tags(entry, request.POST.get("tags_input", ""))
             from utils.md_writer import write_entry_md
+
             entry.md_filepath = str(write_entry_md(entry))
             entry.save(update_fields=["md_filepath"])
             messages.success(request, "Entry updated.")
             return redirect("core:entry_detail", pk=entry.pk)
     else:
-        form = EntryConfirmForm(instance=entry, initial={
-            "tags_input": entry.tag_list(),
-        })
-    return render(request, "core/entry_add.html", {
-        "step": "2",
-        "confirm_form": form,
-        "edit_mode": True,
-        "entry": entry,
-        "tags_prefill": entry.tag_list(),
-    })
+        form = EntryConfirmForm(
+            instance=entry,
+            initial={
+                "tags_input": entry.tag_list(),
+            },
+        )
+    return render(
+        request,
+        "core/entry_add.html",
+        {
+            "step": "2",
+            "confirm_form": form,
+            "edit_mode": True,
+            "entry": entry,
+            "tags_prefill": entry.tag_list(),
+        },
+    )
 
 
 def entry_delete(request, pk):
@@ -227,10 +363,13 @@ def entry_delete(request, pk):
         entry.delete()
         messages.success(request, f"Entry '{title}' deleted.")
         return redirect("core:entry_list")
-    return render(request, "core/confirm_delete.html", {"object": entry, "type": "entry"})
+    return render(
+        request, "core/confirm_delete.html", {"object": entry, "type": "entry"}
+    )
 
 
 # ── Entry linking ──────────────────────────────────────────────────────────────
+
 
 def entry_link(request, pk):
     entry = get_object_or_404(Entry, pk=pk)
@@ -258,6 +397,7 @@ def link_delete(request, link_pk):
 
 
 # ── Reports ────────────────────────────────────────────────────────────────────
+
 
 class ReportListView(ListView):
     model = Report
@@ -288,21 +428,43 @@ def report_create(request):
             selection = form.cleaned_data["entry_selection"]
 
             if selection == "topic":
-                q = Q(title__icontains=topic) | Q(tags__name__icontains=topic) | Q(content__icontains=topic)
+                q = (
+                    Q(title__icontains=topic)
+                    | Q(tags__name__icontains=topic)
+                    | Q(content__icontains=topic)
+                )
                 entries = list(Entry.objects.filter(q).distinct()[:40])
             elif selection == "all":
                 entries = list(Entry.objects.all()[:40])
             else:
                 entries = list(form.cleaned_data["selected_entries"])
 
+            is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
             if not entries:
-                messages.warning(request, "No entries matched the topic. Try 'All entries' or select manually.")
+                if is_ajax:
+                    return JsonResponse(
+                        {
+                            "ok": False,
+                            "error": "No entries matched the topic. Try 'All entries' or select manually.",
+                        },
+                        status=400,
+                    )
+                messages.warning(
+                    request,
+                    "No entries matched the topic. Try 'All entries' or select manually.",
+                )
                 return render(request, "core/report_form.html", {"form": form})
 
             try:
                 from agents.report_generator import generate_report
-                content = generate_report(topic=topic, entries=entries, provider=provider)
+
+                content = generate_report(
+                    topic=topic, entries=entries, provider=provider
+                )
             except Exception as exc:
+                if is_ajax:
+                    return JsonResponse({"ok": False, "error": str(exc)}, status=500)
                 messages.error(request, f"Report generation failed: {exc}")
                 return render(request, "core/report_form.html", {"form": form})
 
@@ -315,11 +477,20 @@ def report_create(request):
             report.entries.set(entries)
 
             from utils.md_writer import write_report_md
+
             report.md_filepath = str(write_report_md(report))
             report.save(update_fields=["md_filepath"])
 
+            if is_ajax:
+                return JsonResponse({"ok": True, "report_pk": report.pk})
+
             messages.success(request, f"Report '{title}' generated.")
             return redirect("core:report_detail", pk=report.pk)
+        else:
+            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                return JsonResponse(
+                    {"ok": False, "errors": _form_errors_json(form)}, status=400
+                )
 
     else:
         form = ReportForm()
@@ -334,13 +505,18 @@ def report_delete(request, pk):
         report.delete()
         messages.success(request, f"Report '{title}' deleted.")
         return redirect("core:report_list")
-    return render(request, "core/confirm_delete.html", {"object": report, "type": "report"})
+    return render(
+        request, "core/confirm_delete.html", {"object": report, "type": "report"}
+    )
 
 
 # ── Chat ───────────────────────────────────────────────────────────────────────
 
+
 def chat_list(request):
-    sessions = ChatSession.objects.annotate(msg_count=Count("messages")).order_by("-updated_at")
+    sessions = ChatSession.objects.annotate(msg_count=Count("messages")).order_by(
+        "-updated_at"
+    )
     return render(request, "core/chat_list.html", {"sessions": sessions})
 
 
@@ -364,16 +540,24 @@ def chat_new(request):
     else:
         form = ChatSessionForm(initial={"title": prefill_title})
 
-    return render(request, "core/chat_new.html", {"form": form, "prefill_note": prefill_note})
+    return render(
+        request, "core/chat_new.html", {"form": form, "prefill_note": prefill_note}
+    )
 
 
 def chat_session(request, pk):
     session = get_object_or_404(ChatSession, pk=pk)
-    msgs = session.messages.prefetch_related("cited_entries__category").order_by("created_at")
-    return render(request, "core/chat_session.html", {
-        "session": session,
-        "messages": msgs,
-    })
+    msgs = session.messages.prefetch_related("cited_entries__category").order_by(
+        "created_at"
+    )
+    return render(
+        request,
+        "core/chat_session.html",
+        {
+            "session": session,
+            "messages": msgs,
+        },
+    )
 
 
 @require_POST
@@ -390,6 +574,7 @@ def chat_message(request, pk):
 
     try:
         from agents.chat_agent import chat
+
         result = chat(session_id=session.pk, user_message=user_message)
         return JsonResponse(result)
     except Exception as exc:
@@ -402,22 +587,30 @@ def apply_edit_suggestion(request, msg_pk, entry_pk):
 
     # Parse the edit block for this entry out of the message
     import re
+
     pattern = re.compile(rf"\[EDIT:{entry_pk}\](.*?)\[/EDIT\]", re.DOTALL)
     match = pattern.search(message.content)
     proposed = match.group(1).strip() if match else ""
 
-    form = EntryConfirmForm(instance=entry, initial={
-        "content": proposed,
-        "tags_input": entry.tag_list(),
-    })
-    return render(request, "core/entry_add.html", {
-        "step": "2",
-        "confirm_form": form,
-        "edit_mode": True,
-        "entry": entry,
-        "tags_prefill": entry.tag_list(),
-        "edit_source_note": f"AI suggestion from chat session: {message.session.title}",
-    })
+    form = EntryConfirmForm(
+        instance=entry,
+        initial={
+            "content": proposed,
+            "tags_input": entry.tag_list(),
+        },
+    )
+    return render(
+        request,
+        "core/entry_add.html",
+        {
+            "step": "2",
+            "confirm_form": form,
+            "edit_mode": True,
+            "entry": entry,
+            "tags_prefill": entry.tag_list(),
+            "edit_source_note": f"AI suggestion from chat session: {message.session.title}",
+        },
+    )
 
 
 def chat_delete(request, pk):
@@ -427,29 +620,31 @@ def chat_delete(request, pk):
         session.delete()
         messages.success(request, f"Chat session '{title}' deleted.")
         return redirect("core:chat_list")
-    return render(request, "core/confirm_delete.html", {"object": session, "type": "chat session"})
+    return render(
+        request, "core/confirm_delete.html", {"object": session, "type": "chat session"}
+    )
 
 
 # ── Graph ──────────────────────────────────────────────────────────────────────
 
 # Bootstrap color name → hex (matches config.py color values)
 _COLOR_MAP = {
-    "primary":   "#0d6efd",
-    "success":   "#198754",
-    "warning":   "#ffc107",
+    "primary": "#0d6efd",
+    "success": "#198754",
+    "warning": "#ffc107",
     "secondary": "#6c757d",
-    "info":      "#0dcaf0",
-    "danger":    "#dc3545",
-    "dark":      "#212529",
+    "info": "#0dcaf0",
+    "danger": "#dc3545",
+    "dark": "#212529",
 }
 
 _RELATIONSHIP_COLORS = {
-    "supports":    "#198754",
+    "supports": "#198754",
     "contradicts": "#dc3545",
-    "extends":     "#0d6efd",
-    "cites":       "#6c757d",
-    "uses":        "#6f42c1",
-    "challenges":  "#fd7e14",
+    "extends": "#0d6efd",
+    "cites": "#6c757d",
+    "uses": "#6f42c1",
+    "challenges": "#fd7e14",
 }
 
 
@@ -459,8 +654,7 @@ def graph_view(request):
 
 def graph_data(request):
     entries = (
-        Entry.objects
-        .select_related("category")
+        Entry.objects.select_related("category")
         .prefetch_related("tags")
         .annotate(link_count=Count("outgoing_links"))
     )
@@ -496,7 +690,12 @@ def graph_data(request):
     ]
 
     categories = [
-        {"slug": c.slug, "name": c.name, "icon": c.icon, "color": _COLOR_MAP.get(c.color, "#6c757d")}
+        {
+            "slug": c.slug,
+            "name": c.name,
+            "icon": c.icon,
+            "color": _COLOR_MAP.get(c.color, "#6c757d"),
+        }
         for c in Category.objects.order_by("name")
     ]
 

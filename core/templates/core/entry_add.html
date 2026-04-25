@@ -22,8 +22,8 @@
     </div>
     <div class="flex-grow-1" style="height:2px;background:#e2e8f0;max-width:60px"></div>
     <div class="d-flex align-items-center gap-2">
-      <span class="badge rounded-pill {% if step == '2' %}bg-primary{% else %}bg-secondary{% endif %} px-3 py-2">2</span>
-      <span class="fw-semibold {% if step != '2' %}text-muted{% endif %}">Review & Save</span>
+      <span class="badge rounded-pill {% if step == '2' %}bg-primary{% else %}bg-secondary{% endif %} px-3 py-2" id="step2-badge">2</span>
+      <span class="fw-semibold {% if step != '2' %}text-muted{% endif %}" id="step2-label">Review & Save</span>
     </div>
   </div>
 </div>
@@ -34,7 +34,7 @@
 <div class="card">
   <div class="card-header">Research Input</div>
   <div class="card-body">
-    <form method="post">
+    <form method="post" id="entry-input-form">
       {% csrf_token %}
       <input type="hidden" name="step" value="1">
 
@@ -102,7 +102,7 @@
         </div>
       </div>
 
-      <button type="submit" class="btn btn-primary px-4">
+      <button type="submit" class="btn btn-primary px-4" id="classify-btn">
         <i class="bi bi-cpu"></i> Analyze & Classify
       </button>
     </form>
@@ -130,11 +130,11 @@
     {% if edit_mode %}Edit Entry{% else %}Confirm & Save{% endif %}
   </div>
   <div class="card-body">
-    <form method="post">
+    <form method="post" id="entry-confirm-form">
       {% csrf_token %}
       <input type="hidden" name="step" value="2">
-      <input type="hidden" name="provider" value="{{ provider }}">
-      <input type="hidden" name="confidence" value="{% if result %}{{ result.confidence }}{% endif %}">
+      <input type="hidden" name="provider" value="{{ provider }}" id="hidden-provider">
+      <input type="hidden" name="confidence" value="{% if result %}{{ result.confidence }}{% endif %}" id="hidden-confidence">
 
       <div class="row g-3 mb-3">
         <div class="col-md-8">
@@ -144,7 +144,13 @@
         </div>
         <div class="col-md-4">
           <label class="form-label fw-semibold">Category</label>
-          {{ confirm_form.category }}
+          <select name="category" id="id_category" class="form-select">
+            {% for c in confirm_form.category.field.queryset %}
+            <option value="{{ c.pk }}" {% if confirm_form.category.value|stringformat:"s" == c.pk|stringformat:"s" %}selected{% endif %}>
+              {{ c.icon }} {{ c.name }}
+            </option>
+            {% endfor %}
+          </select>
         </div>
       </div>
 
@@ -166,7 +172,7 @@
         <div class="col-md-3">
           <label class="form-label fw-semibold">Tags</label>
           <input type="text" name="tags_input" class="form-control"
-                 value="{{ tags_prefill }}" placeholder="ml, transformers">
+                 value="{{ tags_prefill }}" placeholder="ml, transformers" id="tags-input">
         </div>
       </div>
 
@@ -187,4 +193,164 @@
   </div>
 </div>
 {% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+  var form = document.getElementById('entry-input-form');
+  if (!form) return;
+
+  var btn = document.getElementById('classify-btn');
+
+  form.addEventListener('submit', function(e) {
+    e.preventDefault();
+
+    // Basic client-side check
+    var textContent = form.querySelector('#id_text_content') ? form.querySelector('#id_text_content').value.trim() : '';
+    var filePath = form.querySelector('#id_file_path') ? form.querySelector('#id_file_path').value.trim() : '';
+    var sourceUrl = form.querySelector('#id_source_url') ? form.querySelector('#id_source_url').value.trim() : '';
+    if (!textContent && !filePath && !sourceUrl) {
+      alert('Provide at least one of: text, file path, or URL.');
+      return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Analyzing…';
+
+    ProgressToast.start('Analyzing entry', [
+      'Extracting content',
+      'Connecting to AI model',
+      'Classifying entry',
+      'Generating tags & title',
+    ]);
+
+    var formData = new FormData(form);
+
+    setTimeout(function() { ProgressToast.advance(); }, 300);
+    setTimeout(function() { ProgressToast.advance(); }, 1200);
+
+    fetch('{% url "core:entry_add" %}', {
+      method: 'POST',
+      headers: {
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-CSRFToken': formData.get('csrfmiddlewaretoken'),
+      },
+      body: formData,
+    })
+    .then(function(resp) {
+      return resp.json().then(function(data) { return { status: resp.status, data: data }; });
+    })
+    .then(function(result) {
+      var data = result.data;
+
+      if (!data.ok) {
+        ProgressToast.fail(data.error || data.message || 'Classification failed');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-cpu"></i> Analyze & Classify';
+        return;
+      }
+
+      ProgressToast.advance(); // step 4
+      ProgressToast.succeed('Entry classified');
+
+      // Build step 2 form dynamically
+      var step1 = document.getElementById('entry-input-form').closest('.card');
+      step1.outerHTML = buildStep2(data);
+    })
+    .catch(function(err) {
+      ProgressToast.fail('Network error: ' + err.message);
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-cpu"></i> Analyze & Classify';
+    });
+  });
+
+  function buildStep2(d) {
+    // Update step indicators
+    var badge2 = document.getElementById('step2-badge');
+    var label2 = document.getElementById('step2-label');
+    if (badge2) { badge2.className = 'badge rounded-pill bg-primary px-3 py-2'; }
+    if (label2) { label2.className = 'fw-semibold'; }
+
+    var catOptions = d.categories.map(function(c) {
+      var sel = (c.pk == d.category_pk) ? ' selected' : '';
+      return '<option value="' + c.pk + '"' + sel + '>' + c.icon + ' ' + c.name + '</option>';
+    }).join('');
+
+    var tagsValue = (d.tags_prefill ? d.tags_prefill + ', ' : '') + d.suggested_tags;
+
+    return '' +
+    '<div class="alert alert-info d-flex gap-3 mb-4">' +
+    '  <div class="fs-3">' + (d.category_icon || '') + '</div>' +
+    '  <div>' +
+    '    <div class="fw-semibold">' +
+    '      AI classified as: <span class="badge bg-' + d.category_color + '">' + d.category_name + '</span>' +
+    '      <span class="badge bg-light text-dark border ms-1">' + d.confidence + ' confidence</span>' +
+    '    </div>' +
+    '    <div class="text-muted small mt-1">' + escHtml(d.classification_reasoning) + '</div>' +
+    '  </div>' +
+    '</div>' +
+    '<div class="card">' +
+    '  <div class="card-header">Confirm & Save</div>' +
+    '  <div class="card-body">' +
+    '    <form method="post" id="entry-confirm-form">' +
+    '      <input type="hidden" name="csrfmiddlewaretoken" value="' + getCookie('csrftoken') + '">' +
+    '      <input type="hidden" name="step" value="2">' +
+    '      <input type="hidden" name="provider" value="' + escAttr(d.provider) + '">' +
+    '      <input type="hidden" name="confidence" value="' + escAttr(d.confidence) + '">' +
+    '      <div class="row g-3 mb-3">' +
+    '        <div class="col-md-8">' +
+    '          <label class="form-label fw-semibold">Title</label>' +
+    '          <input type="text" name="title" class="form-control" value="' + escAttr(d.suggested_title) + '">' +
+    '        </div>' +
+    '        <div class="col-md-4">' +
+    '          <label class="form-label fw-semibold">Category</label>' +
+    '          <select name="category" id="id_category" class="form-select">' + catOptions + '</select>' +
+    '        </div>' +
+    '      </div>' +
+    '      <div class="mb-3">' +
+    '        <label class="form-label fw-semibold">Content</label>' +
+    '        <textarea name="content" class="form-control" rows="12">' + escHtml(d.content) + '</textarea>' +
+    '      </div>' +
+    '      <div class="row g-3 mb-3">' +
+    '        <div class="col-md-5">' +
+    '          <label class="form-label fw-semibold">Source / citation</label>' +
+    '          <input type="text" name="source" class="form-control" value="' + escAttr(d.source) + '">' +
+    '        </div>' +
+    '        <div class="col-md-4">' +
+    '          <label class="form-label fw-semibold">Source URL</label>' +
+    '          <input type="text" name="source_url" class="form-control" value="' + escAttr(d.source_url) + '">' +
+    '        </div>' +
+    '        <div class="col-md-3">' +
+    '          <label class="form-label fw-semibold">Tags</label>' +
+    '          <input type="text" name="tags_input" class="form-control" value="' + escAttr(tagsValue) + '" placeholder="ml, transformers">' +
+    '        </div>' +
+    '      </div>' +
+    '      <div class="mb-4">' +
+    '        <label class="form-label fw-semibold text-muted">AI Reasoning</label>' +
+    '        <textarea name="classification_reasoning" class="form-control" rows="3">' + escHtml(d.classification_reasoning) + '</textarea>' +
+    '      </div>' +
+    '      <div class="d-flex gap-2">' +
+    '        <button type="submit" class="btn btn-success px-4"><i class="bi bi-check-lg"></i> Save Entry</button>' +
+    '        <a href="{% url "core:entry_add" %}" class="btn btn-outline-secondary">← Start over</a>' +
+    '      </div>' +
+    '    </form>' +
+    '  </div>' +
+    '</div>';
+  }
+
+  function escHtml(s) {
+    var d = document.createElement('div');
+    d.textContent = s || '';
+    return d.innerHTML;
+  }
+  function escAttr(s) {
+    return (s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function getCookie(name) {
+    var v = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+    return v ? v.pop() : '';
+  }
+})();
+</script>
 {% endblock %}

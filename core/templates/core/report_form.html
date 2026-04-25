@@ -11,7 +11,7 @@
     <div class="card">
       <div class="card-header">Report Configuration</div>
       <div class="card-body">
-        <form method="post">
+        <form method="post" id="report-form">
           {% csrf_token %}
 
           <div class="mb-3">
@@ -56,7 +56,7 @@
             {{ form.llm_provider }}
           </div>
 
-          <button type="submit" class="btn btn-primary px-4">
+          <button type="submit" class="btn btn-primary px-4" id="generate-btn">
             <i class="bi bi-lightning"></i> Generate Report
           </button>
         </form>
@@ -84,11 +84,69 @@
 
 {% block extra_js %}
 <script>
-  document.querySelectorAll('input[name="entry_selection"]').forEach(radio => {
-    radio.addEventListener('change', () => {
+(function() {
+  document.querySelectorAll('input[name="entry_selection"]').forEach(function(radio) {
+    radio.addEventListener('change', function() {
       document.getElementById('manual-entries').style.display =
         radio.value === 'manual' && radio.checked ? 'block' : 'none';
     });
   });
+
+  var form = document.getElementById('report-form');
+  if (!form) return;
+  var btn = document.getElementById('generate-btn');
+
+  form.addEventListener('submit', function(e) {
+    e.preventDefault();
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Generating…';
+
+    ProgressToast.start('Generating report', [
+      'Gathering entries',
+      'Connecting to AI model',
+      'Synthesizing research',
+      'Writing report',
+    ]);
+
+    setTimeout(function() { ProgressToast.advance(); }, 300);
+    setTimeout(function() { ProgressToast.advance(); }, 1500);
+
+    var formData = new FormData(form);
+
+    fetch('{% url "core:report_create" %}', {
+      method: 'POST',
+      headers: {
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-CSRFToken': formData.get('csrfmiddlewaretoken'),
+      },
+      body: formData,
+    })
+    .then(function(resp) {
+      return resp.json().then(function(data) { return { status: resp.status, data: data }; });
+    })
+    .then(function(result) {
+      var data = result.data;
+
+      if (!data.ok) {
+        ProgressToast.fail(data.error || 'Report generation failed');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-lightning"></i> Generate Report';
+        return;
+      }
+
+      ProgressToast.advance();
+      ProgressToast.succeed('Report created');
+      setTimeout(function() {
+        window.location.href = '/reports/' + data.report_pk + '/';
+      }, 800);
+    })
+    .catch(function(err) {
+      ProgressToast.fail('Network error: ' + err.message);
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-lightning"></i> Generate Report';
+    });
+  });
+})();
 </script>
 {% endblock %}

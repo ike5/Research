@@ -105,6 +105,16 @@
     .link-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9; }
     .link-row:last-child { border-bottom: none; }
 
+    /* Progress toast */
+    #progress-toast { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; min-width: 320px; max-width: 420px; }
+    #progress-toast .toast-body { padding: 0.75rem 1rem; }
+    .progress-step { display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0; font-size: 0.85rem; color: #64748b; }
+    .progress-step .bi { font-size: 1rem; }
+    .progress-step.done { color: #198754; }
+    .progress-step.active { color: #0d6efd; font-weight: 600; }
+    .progress-step.pending { color: #94a3b8; }
+    .progress-step .spinner-border { width: 1rem; height: 1rem; border-width: 2px; }
+
     @media (max-width: 768px) {
       #sidebar { display: none; }
       #main { margin-left: 0; padding: 1rem; }
@@ -171,6 +181,95 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+<!-- Progress toast container -->
+<div id="progress-toast" class="toast" role="alert" aria-live="assertive" data-bs-autohide="false">
+  <div class="toast-header">
+    <i class="bi bi-cpu me-2"></i>
+    <strong class="me-auto" id="progress-toast-title">Processing…</strong>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Close" id="progress-toast-close" style="display:none"></button>
+  </div>
+  <div class="toast-body" id="progress-toast-body"></div>
+</div>
+
+<script>
+window.ProgressToast = {
+  _toast: null,
+  _steps: [],
+  _current: -1,
+  _timer: null,
+
+  init() {
+    this._el = document.getElementById('progress-toast');
+    this._toast = new bootstrap.Toast(this._el, { autohide: false });
+  },
+
+  start(title, steps) {
+    this._steps = steps;
+    this._current = -1;
+    document.getElementById('progress-toast-title').textContent = title;
+    document.getElementById('progress-toast-close').style.display = 'none';
+    const body = document.getElementById('progress-toast-body');
+    body.innerHTML = steps.map((s, i) =>
+      '<div class="progress-step pending" data-step="' + i + '">' +
+      '<span class="step-icon"><i class="bi bi-circle"></i></span> ' + s +
+      '</div>'
+    ).join('');
+    this._toast.show();
+    this.advance();
+  },
+
+  advance() {
+    this._current++;
+    const body = document.getElementById('progress-toast-body');
+    const steps = body.querySelectorAll('.progress-step');
+    steps.forEach((el, i) => {
+      const icon = el.querySelector('.step-icon');
+      if (i < this._current) {
+        el.className = 'progress-step done';
+        icon.innerHTML = '<i class="bi bi-check-circle-fill"></i>';
+      } else if (i === this._current) {
+        el.className = 'progress-step active';
+        icon.innerHTML = '<div class="spinner-border spinner-border-sm" role="status"></div>';
+      } else {
+        el.className = 'progress-step pending';
+        icon.innerHTML = '<i class="bi bi-circle"></i>';
+      }
+    });
+  },
+
+  succeed(message) {
+    const body = document.getElementById('progress-toast-body');
+    const steps = body.querySelectorAll('.progress-step');
+    steps.forEach(el => {
+      el.className = 'progress-step done';
+      el.querySelector('.step-icon').innerHTML = '<i class="bi bi-check-circle-fill"></i>';
+    });
+    if (message) {
+      body.insertAdjacentHTML('beforeend',
+        '<div class="progress-step done mt-1 pt-2 border-top"><span class="step-icon"><i class="bi bi-check-circle-fill"></i></span> ' + message + '</div>'
+      );
+    }
+    document.getElementById('progress-toast-title').textContent = 'Done';
+    document.getElementById('progress-toast-close').style.display = '';
+    setTimeout(() => this._toast.hide(), 3000);
+  },
+
+  fail(message) {
+    const body = document.getElementById('progress-toast-body');
+    body.insertAdjacentHTML('beforeend',
+      '<div class="progress-step text-danger mt-1 pt-2 border-top"><span class="step-icon"><i class="bi bi-exclamation-circle-fill"></i></span> <strong>' + message + '</strong></div>'
+    );
+    document.getElementById('progress-toast-title').textContent = 'Error';
+    document.getElementById('progress-toast-close').style.display = '';
+  },
+
+  hide() { this._toast.hide(); }
+};
+
+document.addEventListener('DOMContentLoaded', () => ProgressToast.init());
+</script>
+
 {% block extra_js %}{% endblock %}
 </body>
 </html>
