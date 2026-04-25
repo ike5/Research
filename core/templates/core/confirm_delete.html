@@ -1,0 +1,23 @@
+{% extends "core/base.html" %}
+{% block title %}Confirm Delete — Research Organizer{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center mt-5">
+  <div class="col-md-5">
+    <div class="card">
+      <div class="card-header text-danger fw-semibold">
+        <i class="bi bi-exclamation-triangle"></i> Confirm Delete
+      </div>
+      <div class="card-body">
+        <p>Delete <strong>{{ object }}</strong>?</p>
+        <p class="text-muted small">This action cannot be undone.</p>
+        <form method="post" class="d-flex gap-2">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-danger">Delete</button>
+          <a href="javascript:history.back()" class="btn btn-outline-secondary">Cancel</a>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

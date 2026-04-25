@@ -1,0 +1,48 @@
+{% extends "core/base.html" %}
+{% block title %}Link Entry — Research Organizer{% endblock %}
+
+{% block content %}
+<div class="topbar">
+  <h1>Link Entry</h1>
+  <a href="{{ entry.get_absolute_url }}" class="btn btn-outline-secondary">Cancel</a>
+</div>
+
+<div class="row justify-content-center">
+  <div class="col-md-7">
+    <div class="card mb-3">
+      <div class="card-header">From</div>
+      <div class="card-body">
+        <div class="fw-semibold">{{ entry.title }}</div>
+        <span class="badge bg-{{ entry.category.color }} category-badge mt-1">
+          {{ entry.category.icon }} {{ entry.category.name }}
+        </span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Create Link</div>
+      <div class="card-body">
+        <form method="post">
+          {% csrf_token %}
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Relationship</label>
+            {{ form.relationship }}
+            <div class="form-text">How does <em>{{ entry.title }}</em> relate to the target entry?</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Target Entry</label>
+            {{ form.to_entry }}
+          </div>
+          <div class="mb-4">
+            <label class="form-label fw-semibold">Note <span class="text-muted fw-normal">(optional)</span></label>
+            {{ form.note }}
+          </div>
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-link-45deg"></i> Create Link
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

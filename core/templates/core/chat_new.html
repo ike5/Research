@@ -1,0 +1,66 @@
+{% extends "core/base.html" %}
+{% block title %}New Chat — Research Organizer{% endblock %}
+
+{% block content %}
+<div class="topbar">
+  <h1>New Chat Session</h1>
+  <a href="{% url 'core:chat_list' %}" class="btn btn-outline-secondary">Cancel</a>
+</div>
+
+<div class="row justify-content-center">
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-body">
+        <form method="post">
+          {% csrf_token %}
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Session Title</label>
+            {{ form.title }}
+            {% if form.title.errors %}<div class="text-danger small">{{ form.title.errors }}</div>{% endif %}
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Mode</label>
+            {{ form.mode }}
+            <div class="form-text mt-2">
+              <div id="mode-explore" class="mode-desc"><i class="bi bi-search text-primary"></i> <strong>Explore</strong> — Ask questions, find connections, get explanations from your knowledge base.</div>
+              <div id="mode-contest" class="mode-desc d-none"><i class="bi bi-shield-exclamation text-danger"></i> <strong>Contest</strong> — Adversarial peer review. The AI challenges your assumptions, finds gaps, and steelmans opposing views.</div>
+              <div id="mode-edit" class="mode-desc d-none"><i class="bi bi-pencil-square text-warning"></i> <strong>Edit</strong> — Ask the AI to propose rewrites. It wraps suggestions in [EDIT] blocks so you can review and apply with one click.</div>
+            </div>
+          </div>
+
+          <div class="mb-4">
+            <label class="form-label fw-semibold">LLM Provider</label>
+            {{ form.llm_provider }}
+          </div>
+
+          {% if prefill_note %}
+          <div class="alert alert-info py-2 small">
+            <i class="bi bi-info-circle"></i> Starting with context focused on: <strong>{{ prefill_note }}</strong>
+          </div>
+          {% endif %}
+
+          <button type="submit" class="btn btn-primary px-4">
+            <i class="bi bi-chat-dots"></i> Start Chat
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  const modeSelect = document.getElementById('id_mode');
+  function updateModeDesc() {
+    document.querySelectorAll('.mode-desc').forEach(el => el.classList.add('d-none'));
+    const val = modeSelect.value;
+    const el = document.getElementById('mode-' + val);
+    if (el) el.classList.remove('d-none');
+  }
+  modeSelect.addEventListener('change', updateModeDesc);
+  updateModeDesc();
+</script>
+{% endblock %}

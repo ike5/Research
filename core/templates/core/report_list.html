@@ -1,0 +1,55 @@
+{% extends "core/base.html" %}
+{% block title %}Reports — Research Organizer{% endblock %}
+
+{% block content %}
+<div class="topbar">
+  <h1>Reports</h1>
+  <a href="{% url 'core:report_create' %}" class="btn btn-primary">
+    <i class="bi bi-lightning"></i> Generate Report
+  </a>
+</div>
+
+{% if reports %}
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th class="ps-3">Title</th>
+          <th>Topic</th>
+          <th>Entries</th>
+          <th>Provider</th>
+          <th>Created</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for report in reports %}
+        <tr>
+          <td class="ps-3 py-2">
+            <a href="{{ report.get_absolute_url }}" class="fw-semibold text-decoration-none text-dark">
+              {{ report.title|truncatechars:60 }}
+            </a>
+          </td>
+          <td class="small text-muted">{{ report.topic|truncatechars:40 }}</td>
+          <td class="small text-muted">{{ report.entries.count }}</td>
+          <td class="small text-muted">{{ report.llm_provider }}</td>
+          <td class="small text-muted">{{ report.created_at|date:"M j, Y" }}</td>
+          <td class="pe-3 text-end">
+            <a href="{{ report.get_absolute_url }}" class="btn btn-sm btn-outline-secondary">View</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="card">
+  <div class="card-body text-center py-5 text-muted">
+    <i class="bi bi-file-earmark-text fs-1 d-block mb-2"></i>
+    No reports yet. <a href="{% url 'core:report_create' %}">Generate your first one →</a>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

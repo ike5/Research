@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Research Organizer{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <style>
+    :root {
+      --sidebar-width: 240px;
+      --sidebar-bg: #0f172a;
+      --sidebar-accent: #1e293b;
+    }
+    body { background: #f8fafc; font-family: 'Segoe UI', system-ui, sans-serif; }
+
+    /* Sidebar */
+    #sidebar {
+      width: var(--sidebar-width);
+      min-height: 100vh;
+      background: var(--sidebar-bg);
+      position: fixed;
+      top: 0; left: 0;
+      overflow-y: auto;
+      z-index: 100;
+      padding-bottom: 2rem;
+    }
+    #sidebar .brand {
+      padding: 1.25rem 1.25rem 0.75rem;
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #e2e8f0;
+      border-bottom: 1px solid #1e293b;
+      margin-bottom: 0.5rem;
+    }
+    #sidebar .nav-section {
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: #475569;
+      padding: 0.75rem 1.25rem 0.25rem;
+    }
+    #sidebar .nav-link {
+      color: #94a3b8;
+      padding: 0.4rem 1.25rem;
+      font-size: 0.875rem;
+      border-radius: 0;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      text-decoration: none;
+    }
+    #sidebar .nav-link:hover, #sidebar .nav-link.active {
+      color: #e2e8f0;
+      background: var(--sidebar-accent);
+    }
+    #sidebar .cat-count {
+      margin-left: auto;
+      font-size: 0.7rem;
+      background: #1e293b;
+      color: #64748b;
+      padding: 1px 6px;
+      border-radius: 10px;
+    }
+    #sidebar .nav-link.active .cat-count { background: #334155; color: #94a3b8; }
+
+    /* Main */
+    #main { margin-left: var(--sidebar-width); padding: 2rem; min-height: 100vh; }
+
+    /* Topbar */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.75rem;
+    }
+    .topbar h1 { font-size: 1.5rem; font-weight: 700; color: #0f172a; margin: 0; }
+
+    /* Cards */
+    .card { border: none; box-shadow: 0 1px 3px rgba(0,0,0,.08); border-radius: 10px; }
+    .card-header { background: #fff; border-bottom: 1px solid #e2e8f0; font-weight: 600; }
+
+    /* Stat cards */
+    .stat-card { background: #fff; border-radius: 10px; padding: 1.25rem 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    .stat-card .stat-num { font-size: 2rem; font-weight: 700; color: #0f172a; line-height: 1; }
+    .stat-card .stat-label { font-size: 0.8rem; color: #64748b; margin-top: 0.25rem; }
+
+    /* Entry content */
+    .entry-content { line-height: 1.75; color: #1e293b; }
+    .entry-content h1, .entry-content h2, .entry-content h3 { margin-top: 1.5rem; }
+    .entry-content pre { background: #f1f5f9; padding: 1rem; border-radius: 6px; overflow-x: auto; }
+    .entry-content code { background: #f1f5f9; padding: 1px 5px; border-radius: 3px; font-size: 0.875em; }
+    .entry-content table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    .entry-content th, .entry-content td { border: 1px solid #e2e8f0; padding: 0.5rem 0.75rem; }
+    .entry-content th { background: #f8fafc; }
+
+    /* Alerts */
+    .alert { border-radius: 8px; }
+
+    /* Badges */
+    .category-badge { font-size: 0.75rem; }
+
+    /* Link row */
+    .link-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9; }
+    .link-row:last-child { border-bottom: none; }
+
+    @media (max-width: 768px) {
+      #sidebar { display: none; }
+      #main { margin-left: 0; padding: 1rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<nav id="sidebar">
+  <div class="brand">🔬 Research</div>
+
+  <div class="nav-section">Navigation</div>
+  <a href="{% url 'core:home' %}" class="nav-link {% if request.resolver_match.url_name == 'home' %}active{% endif %}">
+    <i class="bi bi-house"></i> Dashboard
+  </a>
+  <a href="{% url 'core:entry_list' %}" class="nav-link {% if request.resolver_match.url_name == 'entry_list' %}active{% endif %}">
+    <i class="bi bi-collection"></i> All Entries
+  </a>
+  <a href="{% url 'core:report_list' %}" class="nav-link {% if request.resolver_match.url_name == 'report_list' %}active{% endif %}">
+    <i class="bi bi-file-earmark-text"></i> Reports
+  </a>
+  <a href="{% url 'core:chat_list' %}" class="nav-link {% if 'chat' in request.resolver_match.url_name %}active{% endif %}">
+    <i class="bi bi-chat-dots"></i> Chat
+  </a>
+  <a href="{% url 'core:graph' %}" class="nav-link {% if request.resolver_match.url_name == 'graph' %}active{% endif %}">
+    <i class="bi bi-diagram-3"></i> Graph
+  </a>
+
+  <div class="nav-section" style="margin-top:.5rem">Categories</div>
+  {% for cat in all_categories %}
+  <a href="{% url 'core:category' cat.slug %}"
+     class="nav-link {% if request.resolver_match.kwargs.slug == cat.slug %}active{% endif %}">
+    {{ cat.icon }} {{ cat.name }}
+    {% if cat.entry_count is not None %}<span class="cat-count">{{ cat.entry_count }}</span>{% endif %}
+  </a>
+  {% empty %}
+  <span class="nav-link text-muted fst-italic">Run setup_research</span>
+  {% endfor %}
+
+  <div class="nav-section" style="margin-top:.5rem">Actions</div>
+  <a href="{% url 'core:entry_add' %}" class="nav-link">
+    <i class="bi bi-plus-circle"></i> Add Entry
+  </a>
+  <a href="{% url 'core:report_create' %}" class="nav-link">
+    <i class="bi bi-lightning"></i> Generate Report
+  </a>
+  <a href="{% url 'core:chat_new' %}" class="nav-link">
+    <i class="bi bi-chat-text"></i> New Chat
+  </a>
+</nav>
+
+<!-- Main -->
+<div id="main">
+  {% if messages %}
+    {% for msg in messages %}
+    <div class="alert alert-{{ msg.tags|default:'info' }} alert-dismissible fade show" role="alert">
+      {{ msg }} <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endfor %}
+  {% endif %}
+
+  {% block content %}{% endblock %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>

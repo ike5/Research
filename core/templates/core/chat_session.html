@@ -1,0 +1,312 @@
+{% extends "core/base.html" %}
+{% block title %}{{ session.title }} — Chat{% endblock %}
+
+{% block content %}
+<div class="topbar">
+  <div>
+    <nav aria-label="breadcrumb">
+      <ol class="breadcrumb mb-1 small">
+        <li class="breadcrumb-item"><a href="{% url 'core:chat_list' %}">Chat</a></li>
+        <li class="breadcrumb-item active">{{ session.title|truncatechars:40 }}</li>
+      </ol>
+    </nav>
+    <h1 class="d-flex align-items-center gap-2">
+      {{ session.title }}
+      {% if session.mode == "explore" %}
+        <span class="badge bg-primary fs-6">Explore</span>
+      {% elif session.mode == "contest" %}
+        <span class="badge bg-danger fs-6">Contest</span>
+      {% else %}
+        <span class="badge bg-warning text-dark fs-6">Edit</span>
+      {% endif %}
+    </h1>
+    <div class="text-muted small">{{ session.llm_provider }} · {{ session.created_at|date:"N j, Y" }}</div>
+  </div>
+  <form method="post" action="{% url 'core:chat_delete' session.pk %}"
+        onsubmit="return confirm('Delete this chat session and all messages?')">
+    {% csrf_token %}
+    <button class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> Delete</button>
+  </form>
+</div>
+
+<div class="row g-4" style="min-height: calc(100vh - 200px)">
+  <!-- Chat panel -->
+  <div class="col-lg-8 d-flex flex-column">
+    <!-- Message history -->
+    <div id="message-list" class="flex-grow-1 mb-3" style="overflow-y:auto; max-height: calc(100vh - 320px)">
+      {% if not messages %}
+      <div class="text-center text-muted py-5" id="empty-hint">
+        <i class="bi bi-chat-dots fs-1 d-block mb-2"></i>
+        {% if session.mode == "explore" %}
+          Ask anything about your research. Try: <em>"What are the main themes across my citations?"</em>
+        {% elif session.mode == "contest" %}
+          Present a claim to be challenged. Try: <em>"Contest my hypothesis that X causes Y."</em>
+        {% else %}
+          Point to an entry to revise. Try: <em>"Rewrite entry #3 to be more concise."</em>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {% for msg in messages %}
+      <div class="message-bubble {% if msg.role == 'user' %}msg-user{% else %}msg-assistant{% endif %}"
+           data-msg-pk="{{ msg.pk }}">
+        <div class="msg-meta">
+          {% if msg.role == 'user' %}
+            <i class="bi bi-person-circle"></i> You
+          {% else %}
+            <i class="bi bi-cpu"></i> AI
+            {% if session.mode == "contest" %}<span class="badge bg-danger ms-1 small">Contesting</span>{% endif %}
+            {% if session.mode == "edit" %}<span class="badge bg-warning text-dark ms-1 small">Editor</span>{% endif %}
+          {% endif %}
+          <span class="text-muted ms-2 small">{{ msg.created_at|time:"g:i a" }}</span>
+        </div>
+        <div class="msg-content entry-content">
+          {% if msg.role == 'assistant' %}
+            {{ msg.content|linebreaksbr }}
+          {% else %}
+            {{ msg.content }}
+          {% endif %}
+        </div>
+
+        {% if msg.has_edit_suggestion and msg.role == 'assistant' %}
+        <div class="edit-actions mt-2">
+          {% for entry in msg.cited_entries.all %}
+          <a href="{% url 'core:apply_edit' msg_pk=msg.pk entry_pk=entry.pk %}"
+             class="btn btn-sm btn-warning me-1">
+            <i class="bi bi-pencil-check"></i> Review edit for: {{ entry.title|truncatechars:35 }}
+          </a>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if msg.cited_entries.all and msg.role == 'assistant' %}
+        <div class="cited-entries mt-2">
+          <span class="small text-muted"><i class="bi bi-bookmark"></i> Referenced:</span>
+          {% for entry in msg.cited_entries.all %}
+          <a href="{{ entry.get_absolute_url }}"
+             class="badge bg-light text-dark border text-decoration-none ms-1 small">
+            {{ entry.title|truncatechars:30 }}
+          </a>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+
+      <!-- Typing indicator -->
+      <div id="typing-indicator" class="message-bubble msg-assistant d-none">
+        <div class="msg-meta"><i class="bi bi-cpu"></i> AI</div>
+        <div class="msg-content">
+          <span class="typing-dot"></span>
+          <span class="typing-dot"></span>
+          <span class="typing-dot"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Input bar -->
+    <div class="card">
+      <div class="card-body p-2">
+        <div id="chat-error" class="alert alert-danger py-2 small d-none mb-2"></div>
+        <form id="chat-form" class="d-flex gap-2">
+          {% csrf_token %}
+          <textarea id="chat-input" class="form-control" rows="2"
+                    placeholder="{% if session.mode == 'contest' %}Present a claim to challenge…{% elif session.mode == 'edit' %}Ask to rewrite an entry…{% else %}Ask a question about your research…{% endif %}"
+                    style="resize:none"></textarea>
+          <button type="submit" class="btn btn-primary px-3" id="send-btn">
+            <i class="bi bi-send-fill"></i>
+          </button>
+        </form>
+        <div class="form-text mt-1">Shift+Enter for new line · Enter to send</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Context sidebar -->
+  <div class="col-lg-4">
+    <div class="card mb-3">
+      <div class="card-header"><i class="bi bi-database"></i> Knowledge Base Context</div>
+      <div class="card-body py-2 px-3 small text-muted">
+        The AI has access to <strong>all your research entries</strong> and selects the most relevant
+        ones for each message automatically.
+        <div class="mt-2">
+          <a href="{% url 'core:entry_list' %}" class="btn btn-sm btn-outline-secondary w-100">
+            View all entries
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" id="cited-sidebar">
+      <div class="card-header"><i class="bi bi-bookmark-check"></i> Recently cited entries</div>
+      <div id="cited-list" class="list-group list-group-flush">
+        <div class="list-group-item text-muted small fst-italic">Entries cited by the AI will appear here.</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<style>
+.message-bubble { padding: 0.75rem 1rem; margin-bottom: 0.75rem; border-radius: 10px; }
+.msg-user { background: #eff6ff; border-left: 3px solid #0d6efd; }
+.msg-assistant { background: #f8fafc; border-left: 3px solid #dee2e6; }
+.msg-meta { font-size: 0.8rem; font-weight: 600; color: #64748b; margin-bottom: 0.4rem; }
+.msg-content { line-height: 1.65; }
+.msg-content pre { background: #f1f5f9; padding: 0.75rem; border-radius: 6px; overflow-x: auto; font-size: 0.85em; }
+.msg-content code { background: #f1f5f9; padding: 1px 4px; border-radius: 3px; font-size: 0.875em; }
+.cited-entries { border-top: 1px solid #e2e8f0; padding-top: 0.4rem; }
+.typing-dot { display: inline-block; width: 8px; height: 8px; background: #94a3b8; border-radius: 50%; margin: 0 2px; animation: blink 1.2s infinite; }
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink { 0%,80%,100%{opacity:0.2} 40%{opacity:1} }
+</style>
+
+<script>
+const SESSION_PK = {{ session.pk }};
+const MSG_URL = "{% url 'core:chat_message' session.pk %}";
+const CSRF = "{{ csrf_token }}";
+
+const form = document.getElementById("chat-form");
+const input = document.getElementById("chat-input");
+const list = document.getElementById("message-list");
+const typingEl = document.getElementById("typing-indicator");
+const sendBtn = document.getElementById("send-btn");
+const errorEl = document.getElementById("chat-error");
+const citedList = document.getElementById("cited-list");
+
+// Scroll to bottom on load
+list.scrollTop = list.scrollHeight;
+
+// Enter to send, Shift+Enter for newline
+input.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); form.dispatchEvent(new Event("submit")); }
+});
+
+function appendMessage(role, html, msgPk, editBlocks, citedEntries) {
+  const emptyHint = document.getElementById("empty-hint");
+  if (emptyHint) emptyHint.remove();
+
+  const bubble = document.createElement("div");
+  bubble.className = `message-bubble msg-${role}`;
+  if (msgPk) bubble.dataset.msgPk = msgPk;
+
+  const meta = document.createElement("div");
+  meta.className = "msg-meta";
+  meta.innerHTML = role === "user"
+    ? '<i class="bi bi-person-circle"></i> You'
+    : '<i class="bi bi-cpu"></i> AI';
+  bubble.appendChild(meta);
+
+  const content = document.createElement("div");
+  content.className = "msg-content entry-content";
+  content.innerHTML = html;
+  bubble.appendChild(content);
+
+  // Edit suggestion buttons
+  if (editBlocks && editBlocks.length > 0) {
+    const actions = document.createElement("div");
+    actions.className = "edit-actions mt-2";
+    editBlocks.forEach(block => {
+      if (msgPk) {
+        const a = document.createElement("a");
+        a.href = `/chat/apply/${msgPk}/${block.entry_pk}/`;
+        a.className = "btn btn-sm btn-warning me-1";
+        a.innerHTML = '<i class="bi bi-pencil-check"></i> Review edit for entry #' + block.entry_pk;
+        actions.appendChild(a);
+      }
+    });
+    bubble.appendChild(actions);
+  }
+
+  // Cited entries inline
+  if (citedEntries && citedEntries.length > 0) {
+    const cited = document.createElement("div");
+    cited.className = "cited-entries mt-2";
+    cited.innerHTML = '<span class="small text-muted"><i class="bi bi-bookmark"></i> Referenced: </span>';
+    citedEntries.forEach(e => {
+      const a = document.createElement("a");
+      a.href = e.url;
+      a.className = "badge bg-light text-dark border text-decoration-none ms-1 small";
+      a.textContent = e.title.length > 30 ? e.title.slice(0, 30) + "…" : e.title;
+      cited.appendChild(a);
+    });
+    bubble.appendChild(cited);
+
+    // Update sidebar
+    updateCitedSidebar(citedEntries);
+  }
+
+  list.insertBefore(bubble, typingEl);
+  list.scrollTop = list.scrollHeight;
+}
+
+function updateCitedSidebar(entries) {
+  const placeholder = citedList.querySelector(".fst-italic");
+  if (placeholder) placeholder.remove();
+  entries.forEach(e => {
+    if (citedList.querySelector(`[data-entry-pk="${e.id}"]`)) return;
+    const item = document.createElement("a");
+    item.href = e.url;
+    item.className = "list-group-item list-group-item-action py-2 px-3 small";
+    item.dataset.entryPk = e.id;
+    item.innerHTML = `<div class="fw-semibold">${e.title.length > 45 ? e.title.slice(0, 45) + "…" : e.title}</div>`;
+    if (e.category) {
+      const badge = document.createElement("span");
+      badge.className = "badge bg-secondary mt-1";
+      badge.textContent = e.category;
+      item.appendChild(badge);
+    }
+    citedList.appendChild(item);
+  });
+}
+
+form.addEventListener("submit", async e => {
+  e.preventDefault();
+  const message = input.value.trim();
+  if (!message) return;
+
+  errorEl.classList.add("d-none");
+  input.value = "";
+  input.disabled = true;
+  sendBtn.disabled = true;
+
+  appendMessage("user", message.replace(/\n/g, "<br>"), null, null, null);
+  typingEl.classList.remove("d-none");
+  list.scrollTop = list.scrollHeight;
+
+  try {
+    const resp = await fetch(MSG_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": CSRF },
+      body: JSON.stringify({ message }),
+    });
+    const data = await resp.json();
+    typingEl.classList.add("d-none");
+
+    if (!resp.ok) {
+      errorEl.textContent = data.error || "An error occurred.";
+      errorEl.classList.remove("d-none");
+    } else {
+      // Build cited entry objects for sidebar
+      const citedEntries = (data.cited_entry_ids || []).map(id => ({
+        id,
+        title: "Entry #" + id,
+        url: "/entries/" + id + "/",
+        category: null,
+      }));
+      appendMessage("assistant", data.reply_html, data.ai_message_pk, data.edit_blocks, citedEntries);
+    }
+  } catch (err) {
+    typingEl.classList.add("d-none");
+    errorEl.textContent = "Network error: " + err.message;
+    errorEl.classList.remove("d-none");
+  } finally {
+    input.disabled = false;
+    sendBtn.disabled = false;
+    input.focus();
+  }
+});
+</script>
+{% endblock %}

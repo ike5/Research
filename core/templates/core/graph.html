@@ -1,0 +1,343 @@
+{% extends "core/base.html" %}
+{% block title %}Research Graph — Research Organizer{% endblock %}
+
+{% block content %}
+<div class="topbar">
+  <h1>🕸 Research Graph</h1>
+  <div class="d-flex gap-2 align-items-center">
+    <span id="graph-stats" class="small text-muted"></span>
+    <a href="{% url 'core:entry_add' %}" class="btn btn-outline-primary btn-sm">
+      <i class="bi bi-plus-lg"></i> Add Entry
+    </a>
+  </div>
+</div>
+
+<!-- Controls bar -->
+<div class="card mb-3">
+  <div class="card-body py-2 px-3">
+    <div class="d-flex flex-wrap align-items-center gap-3">
+      <div class="d-flex align-items-center gap-2">
+        <span class="small fw-semibold text-muted">CATEGORIES</span>
+        <div id="category-filters" class="d-flex flex-wrap gap-2"></div>
+      </div>
+      <div class="d-flex align-items-center gap-2 ms-auto">
+        <span class="small fw-semibold text-muted">LAYOUT</span>
+        <button class="btn btn-sm btn-outline-secondary" id="btn-reset">
+          <i class="bi bi-arrow-counterclockwise"></i> Reset
+        </button>
+        <button class="btn btn-sm btn-outline-secondary" id="btn-cluster">
+          <i class="bi bi-grid-3x3"></i> Cluster by category
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Graph canvas -->
+<div class="card position-relative">
+  <div id="graph-container" style="width:100%;height:72vh;background:#0f172a;border-radius:10px;overflow:hidden">
+    <div id="graph-empty" class="d-flex align-items-center justify-content-center h-100 text-muted d-none">
+      <div class="text-center">
+        <i class="bi bi-diagram-3 fs-1 d-block mb-2" style="color:#475569"></i>
+        <div style="color:#64748b">No entries yet. <a href="{% url 'core:entry_add' %}" style="color:#94a3b8">Add your first one →</a></div>
+      </div>
+    </div>
+    <svg id="graph-svg" width="100%" height="100%"></svg>
+  </div>
+
+  <!-- Tooltip -->
+  <div id="tooltip" style="
+    position:absolute; display:none; pointer-events:none;
+    background:#1e293b; color:#e2e8f0; border:1px solid #334155;
+    border-radius:8px; padding:10px 14px; font-size:13px;
+    max-width:260px; box-shadow:0 4px 12px rgba(0,0,0,.4); z-index:10;
+  "></div>
+</div>
+
+<!-- Legend -->
+<div class="card mt-3">
+  <div class="card-body py-2 px-3">
+    <div class="d-flex flex-wrap gap-3 align-items-center">
+      <span class="small fw-semibold text-muted">LINKS</span>
+      <div id="link-legend" class="d-flex flex-wrap gap-3"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script>
+const DATA_URL = "{% url 'core:graph_data' %}";
+
+const LINK_COLORS = {
+  supports:    "#22c55e",
+  contradicts: "#ef4444",
+  extends:     "#3b82f6",
+  cites:       "#94a3b8",
+  uses:        "#a855f7",
+  challenges:  "#f97316",
+};
+
+let allNodes = [], allLinks = [], categories = [];
+let hiddenCategories = new Set();
+let simulation, svg, g, linkG, nodeG, labelG;
+let clusterMode = false;
+
+// ── Bootstrap ──────────────────────────────────────────────────────────────
+
+async function init() {
+  const res = await fetch(DATA_URL);
+  const data = await res.json();
+  allNodes = data.nodes;
+  allLinks = data.links;
+  categories = data.categories;
+
+  const stats = document.getElementById("graph-stats");
+  stats.textContent = `${allNodes.length} entries · ${allLinks.length} links`;
+
+  if (allNodes.length === 0) {
+    document.getElementById("graph-empty").classList.remove("d-none");
+    document.getElementById("graph-svg").classList.add("d-none");
+    return;
+  }
+
+  buildCategoryFilters();
+  buildLinkLegend();
+  buildGraph();
+}
+
+// ── Filters ────────────────────────────────────────────────────────────────
+
+function buildCategoryFilters() {
+  const container = document.getElementById("category-filters");
+  categories.forEach(cat => {
+    const btn = document.createElement("button");
+    btn.className = "btn btn-sm";
+    btn.style.cssText = `background:${cat.color};color:#fff;border:none;opacity:1`;
+    btn.innerHTML = `${cat.icon} ${cat.name}`;
+    btn.dataset.slug = cat.slug;
+    btn.addEventListener("click", () => toggleCategory(cat.slug, btn, cat.color));
+    container.appendChild(btn);
+  });
+}
+
+function toggleCategory(slug, btn, color) {
+  if (hiddenCategories.has(slug)) {
+    hiddenCategories.delete(slug);
+    btn.style.opacity = "1";
+  } else {
+    hiddenCategories.add(slug);
+    btn.style.opacity = "0.35";
+  }
+  updateVisibility();
+}
+
+function updateVisibility() {
+  nodeG.selectAll(".node").style("display", d =>
+    hiddenCategories.has(d.category) ? "none" : null);
+  labelG.selectAll(".label").style("display", d =>
+    hiddenCategories.has(d.category) ? "none" : null);
+  linkG.selectAll(".link").style("display", l => {
+    const sn = allNodes.find(n => n.id === (l.source.id ?? l.source));
+    const tn = allNodes.find(n => n.id === (l.target.id ?? l.target));
+    return (sn && hiddenCategories.has(sn.category)) || (tn && hiddenCategories.has(tn.category))
+      ? "none" : null;
+  });
+}
+
+// ── Link legend ────────────────────────────────────────────────────────────
+
+function buildLinkLegend() {
+  const container = document.getElementById("link-legend");
+  Object.entries(LINK_COLORS).forEach(([rel, color]) => {
+    const span = document.createElement("span");
+    span.className = "d-flex align-items-center gap-1 small";
+    span.innerHTML = `<span style="display:inline-block;width:20px;height:3px;background:${color};border-radius:2px"></span>${rel}`;
+    container.appendChild(span);
+  });
+}
+
+// ── D3 graph ───────────────────────────────────────────────────────────────
+
+function buildGraph() {
+  const container = document.getElementById("graph-container");
+  const W = container.clientWidth;
+  const H = container.clientHeight;
+
+  svg = d3.select("#graph-svg");
+
+  // Arrow markers
+  const defs = svg.append("defs");
+  Object.entries(LINK_COLORS).forEach(([rel, color]) => {
+    defs.append("marker")
+      .attr("id", `arrow-${rel}`)
+      .attr("viewBox", "0 -4 8 8")
+      .attr("refX", 18).attr("refY", 0)
+      .attr("markerWidth", 5).attr("markerHeight", 5)
+      .attr("orient", "auto")
+      .append("path").attr("d", "M0,-4L8,0L0,4").attr("fill", color).attr("opacity", 0.8);
+  });
+
+  g = svg.append("g");
+  linkG = g.append("g").attr("class", "links");
+  nodeG = g.append("g").attr("class", "nodes");
+  labelG = g.append("g").attr("class", "labels");
+
+  // Zoom
+  svg.call(d3.zoom().scaleExtent([0.2, 4]).on("zoom", e => g.attr("transform", e.transform)));
+
+  // Clone nodes/links so D3 can mutate position
+  const nodes = allNodes.map(d => ({ ...d }));
+  const links = allLinks.map(d => ({ ...d }));
+
+  simulation = d3.forceSimulation(nodes)
+    .force("link", d3.forceLink(links).id(d => d.id).distance(120).strength(0.4))
+    .force("charge", d3.forceManyBody().strength(-320))
+    .force("center", d3.forceCenter(W / 2, H / 2))
+    .force("collide", d3.forceCollide().radius(d => nodeRadius(d) + 8))
+    .on("tick", ticked);
+
+  // Links
+  const link = linkG.selectAll(".link")
+    .data(links).enter().append("line")
+    .attr("class", "link")
+    .attr("stroke", d => LINK_COLORS[d.relationship] || "#555")
+    .attr("stroke-width", 1.5)
+    .attr("stroke-opacity", 0.6)
+    .attr("marker-end", d => `url(#arrow-${d.relationship})`);
+
+  // Nodes
+  const node = nodeG.selectAll(".node")
+    .data(nodes).enter().append("circle")
+    .attr("class", "node")
+    .attr("r", d => nodeRadius(d))
+    .attr("fill", d => d.color)
+    .attr("fill-opacity", 0.85)
+    .attr("stroke", "#fff")
+    .attr("stroke-width", 1.5)
+    .style("cursor", "pointer")
+    .call(d3.drag()
+      .on("start", (event, d) => {
+        if (!event.active) simulation.alphaTarget(0.3).restart();
+        d.fx = d.x; d.fy = d.y;
+      })
+      .on("drag", (event, d) => { d.fx = event.x; d.fy = event.y; })
+      .on("end", (event, d) => {
+        if (!event.active) simulation.alphaTarget(0);
+        d.fx = null; d.fy = null;
+      })
+    )
+    .on("click", (event, d) => { event.stopPropagation(); window.open(d.url, "_self"); })
+    .on("mouseover", showTooltip)
+    .on("mousemove", moveTooltip)
+    .on("mouseout", hideTooltip);
+
+  // Labels
+  const label = labelG.selectAll(".label")
+    .data(nodes).enter().append("text")
+    .attr("class", "label")
+    .attr("text-anchor", "middle")
+    .attr("font-size", "11px")
+    .attr("fill", "#cbd5e1")
+    .attr("dy", d => nodeRadius(d) + 13)
+    .attr("pointer-events", "none")
+    .text(d => d.title.length > 22 ? d.title.slice(0, 22) + "…" : d.title);
+
+  function ticked() {
+    link
+      .attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+      .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+    node.attr("cx", d => d.x).attr("cy", d => d.y);
+    label.attr("x", d => d.x).attr("y", d => d.y);
+  }
+
+  // Reset button
+  document.getElementById("btn-reset").addEventListener("click", () => {
+    clusterMode = false;
+    simulation
+      .force("cluster", null)
+      .force("center", d3.forceCenter(W / 2, H / 2))
+      .alpha(0.8).restart();
+    svg.transition().duration(400).call(
+      d3.zoom().transform, d3.zoomIdentity
+    );
+  });
+
+  // Cluster button
+  document.getElementById("btn-cluster").addEventListener("click", () => {
+    clusterMode = !clusterMode;
+    if (clusterMode) {
+      const catPositions = buildCategoryPositions(W, H);
+      simulation
+        .force("cluster", clusterForce(catPositions, 0.12))
+        .force("center", null)
+        .alpha(0.8).restart();
+    } else {
+      simulation
+        .force("cluster", null)
+        .force("center", d3.forceCenter(W / 2, H / 2))
+        .alpha(0.6).restart();
+    }
+  });
+}
+
+function nodeRadius(d) {
+  return Math.max(10, Math.min(36, Math.sqrt(d.word_count || 100) * 0.8 + d.link_count * 1.5));
+}
+
+function buildCategoryPositions(W, H) {
+  const cats = [...new Set(allNodes.map(n => n.category))];
+  const positions = {};
+  cats.forEach((cat, i) => {
+    const angle = (2 * Math.PI * i) / cats.length - Math.PI / 2;
+    const r = Math.min(W, H) * 0.3;
+    positions[cat] = { x: W / 2 + r * Math.cos(angle), y: H / 2 + r * Math.sin(angle) };
+  });
+  return positions;
+}
+
+function clusterForce(catPositions, strength) {
+  return function(alpha) {
+    allNodes.forEach(d => {
+      const pos = catPositions[d.category];
+      if (!pos) return;
+      d.vx += (pos.x - d.x) * strength * alpha;
+      d.vy += (pos.y - d.y) * strength * alpha;
+    });
+  };
+}
+
+// ── Tooltip ────────────────────────────────────────────────────────────────
+
+const tooltip = document.getElementById("tooltip");
+
+function showTooltip(event, d) {
+  tooltip.innerHTML = `
+    <div style="font-weight:700;margin-bottom:4px">${d.title}</div>
+    <div style="color:#94a3b8;font-size:12px">${d.icon} ${d.category_label}</div>
+    ${d.source ? `<div style="color:#64748b;font-size:11px;margin-top:3px">Source: ${d.source.slice(0, 50)}</div>` : ""}
+    ${d.tags.length ? `<div style="margin-top:5px">${d.tags.map(t => `<span style="background:#334155;color:#94a3b8;padding:1px 6px;border-radius:4px;font-size:11px;margin-right:3px">${t}</span>`).join("")}</div>` : ""}
+    <div style="margin-top:6px;font-size:11px;color:#475569">
+      ${d.word_count} words · ${d.link_count} outgoing links
+    </div>
+    <div style="margin-top:4px;font-size:11px;color:#0ea5e9">Click to open →</div>
+  `;
+  tooltip.style.display = "block";
+  moveTooltip(event);
+}
+
+function moveTooltip(event) {
+  const box = document.getElementById("graph-container").getBoundingClientRect();
+  let x = event.clientX - box.left + 14;
+  let y = event.clientY - box.top + 14;
+  if (x + 280 > box.width) x = event.clientX - box.left - 280;
+  tooltip.style.left = x + "px";
+  tooltip.style.top  = y + "px";
+}
+
+function hideTooltip() { tooltip.style.display = "none"; }
+
+init();
+</script>
+{% endblock %}

@@ -1,0 +1,190 @@
+{% extends "core/base.html" %}
+
+{% block title %}{% if edit_mode %}Edit Entry{% else %}Add Entry{% endif %} — Research Organizer{% endblock %}
+
+{% block content %}
+<div class="topbar">
+  <h1>
+    {% if edit_mode %}Edit Entry{% elif step == "2" %}Review & Save{% else %}Add Entry{% endif %}
+  </h1>
+  {% if edit_mode %}
+  <a href="{{ entry.get_absolute_url }}" class="btn btn-outline-secondary">Cancel</a>
+  {% endif %}
+</div>
+
+<!-- Step indicator (only on add flow) -->
+{% if not edit_mode %}
+<div class="mb-4">
+  <div class="d-flex align-items-center gap-3">
+    <div class="d-flex align-items-center gap-2">
+      <span class="badge rounded-pill {% if step == '1' %}bg-primary{% else %}bg-success{% endif %} px-3 py-2">1</span>
+      <span class="fw-semibold {% if step != '1' %}text-muted{% endif %}">Input</span>
+    </div>
+    <div class="flex-grow-1" style="height:2px;background:#e2e8f0;max-width:60px"></div>
+    <div class="d-flex align-items-center gap-2">
+      <span class="badge rounded-pill {% if step == '2' %}bg-primary{% else %}bg-secondary{% endif %} px-3 py-2">2</span>
+      <span class="fw-semibold {% if step != '2' %}text-muted{% endif %}">Review & Save</span>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if step == "1" %}
+<!-- ── STEP 1: INPUT ─────────────────────────────────────────────────────── -->
+<div class="card">
+  <div class="card-header">Research Input</div>
+  <div class="card-body">
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="step" value="1">
+
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Title <span class="text-muted fw-normal">(optional)</span></label>
+        {{ form.title }}
+        <div class="form-text">{{ form.title.help_text }}</div>
+        {% if form.title.errors %}<div class="text-danger small">{{ form.title.errors }}</div>{% endif %}
+      </div>
+
+      <!-- Input method tabs -->
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Research Content</label>
+        <ul class="nav nav-tabs mb-3" id="inputTabs">
+          <li class="nav-item">
+            <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-text" type="button">
+              <i class="bi bi-textarea-t"></i> Paste Text
+            </button>
+          </li>
+          <li class="nav-item">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-file" type="button">
+              <i class="bi bi-file-earmark-arrow-up"></i> File Path
+            </button>
+          </li>
+          <li class="nav-item">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-url" type="button">
+              <i class="bi bi-link-45deg"></i> URL
+            </button>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane fade show active" id="tab-text">
+            {{ form.text_content }}
+            {% if form.text_content.errors %}<div class="text-danger small">{{ form.text_content.errors }}</div>{% endif %}
+          </div>
+          <div class="tab-pane fade" id="tab-file">
+            {{ form.file_path }}
+            <div class="form-text">{{ form.file_path.help_text }}</div>
+            {% if form.file_path.errors %}<div class="text-danger small">{{ form.file_path.errors }}</div>{% endif %}
+          </div>
+          <div class="tab-pane fade" id="tab-url">
+            {{ form.source_url }}
+            <div class="form-text">{{ form.source_url.help_text }}</div>
+            {% if form.source_url.errors %}<div class="text-danger small">{{ form.source_url.errors }}</div>{% endif %}
+          </div>
+        </div>
+        {% if form.non_field_errors %}
+        <div class="alert alert-danger mt-2 py-2">{{ form.non_field_errors }}</div>
+        {% endif %}
+      </div>
+
+      <div class="row g-3 mb-3">
+        <div class="col-md-6">
+          <label class="form-label fw-semibold">{{ form.source.label }}</label>
+          {{ form.source }}
+        </div>
+        <div class="col-md-3">
+          <label class="form-label fw-semibold">{{ form.tags.label }}</label>
+          {{ form.tags }}
+          <div class="form-text">{{ form.tags.help_text }}</div>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label fw-semibold">{{ form.llm_provider.label }}</label>
+          {{ form.llm_provider }}
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary px-4">
+        <i class="bi bi-cpu"></i> Analyze & Classify
+      </button>
+    </form>
+  </div>
+</div>
+
+{% elif step == "2" %}
+<!-- ── STEP 2: REVIEW & SAVE ─────────────────────────────────────────────── -->
+
+{% if result and not edit_mode %}
+<div class="alert alert-info d-flex gap-3 mb-4">
+  <div class="fs-3">{{ result.category }}</div>
+  <div>
+    <div class="fw-semibold">
+      AI classified as: <span class="badge bg-{{ category_color }}">{{ result.category }}</span>
+      <span class="badge bg-light text-dark border ms-1">{{ result.confidence }} confidence</span>
+    </div>
+    <div class="text-muted small mt-1">{{ result.reasoning }}</div>
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-header">
+    {% if edit_mode %}Edit Entry{% else %}Confirm & Save{% endif %}
+  </div>
+  <div class="card-body">
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="step" value="2">
+      <input type="hidden" name="provider" value="{{ provider }}">
+      <input type="hidden" name="confidence" value="{% if result %}{{ result.confidence }}{% endif %}">
+
+      <div class="row g-3 mb-3">
+        <div class="col-md-8">
+          <label class="form-label fw-semibold">Title</label>
+          {{ confirm_form.title }}
+          {% if confirm_form.title.errors %}<div class="text-danger small">{{ confirm_form.title.errors }}</div>{% endif %}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label fw-semibold">Category</label>
+          {{ confirm_form.category }}
+        </div>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Content</label>
+        {{ confirm_form.content }}
+        {% if confirm_form.content.errors %}<div class="text-danger small">{{ confirm_form.content.errors }}</div>{% endif %}
+      </div>
+
+      <div class="row g-3 mb-3">
+        <div class="col-md-5">
+          <label class="form-label fw-semibold">Source / citation</label>
+          {{ confirm_form.source }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label fw-semibold">Source URL</label>
+          {{ confirm_form.source_url }}
+        </div>
+        <div class="col-md-3">
+          <label class="form-label fw-semibold">Tags</label>
+          <input type="text" name="tags_input" class="form-control"
+                 value="{{ tags_prefill }}" placeholder="ml, transformers">
+        </div>
+      </div>
+
+      <div class="mb-4">
+        <label class="form-label fw-semibold text-muted">AI Reasoning</label>
+        {{ confirm_form.classification_reasoning }}
+      </div>
+
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-success px-4">
+          <i class="bi bi-check-lg"></i> {% if edit_mode %}Save Changes{% else %}Save Entry{% endif %}
+        </button>
+        {% if not edit_mode %}
+        <a href="{% url 'core:entry_add' %}" class="btn btn-outline-secondary">← Start over</a>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

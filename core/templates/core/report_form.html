@@ -1,0 +1,94 @@
+{% extends "core/base.html" %}
+{% block title %}Generate Report — Research Organizer{% endblock %}
+
+{% block content %}
+<div class="topbar">
+  <h1>Generate Research Report</h1>
+</div>
+
+<div class="row">
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header">Report Configuration</div>
+      <div class="card-body">
+        <form method="post">
+          {% csrf_token %}
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Report Title</label>
+            {{ form.title }}
+            {% if form.title.errors %}<div class="text-danger small">{{ form.title.errors }}</div>{% endif %}
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Topic / Focus</label>
+            {{ form.topic }}
+            <div class="form-text">{{ form.topic.help_text }}</div>
+            {% if form.topic.errors %}<div class="text-danger small">{{ form.topic.errors }}</div>{% endif %}
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold d-block mb-2">Entry Selection</label>
+            {% for choice in form.entry_selection %}
+            <div class="form-check">
+              {{ choice.tag }}
+              <label class="form-check-label" for="{{ choice.id_for_label }}">{{ choice.choice_label }}</label>
+            </div>
+            {% endfor %}
+          </div>
+
+          <div id="manual-entries" class="mb-3" style="display:none">
+            <label class="form-label fw-semibold">Select Entries</label>
+            <div class="border rounded p-3" style="max-height:300px;overflow-y:auto">
+              {% for entry in form.selected_entries %}
+              <div class="form-check">
+                {{ entry.tag }}
+                <label class="form-check-label small" for="{{ entry.id_for_label }}">
+                  {{ entry.choice_label }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+
+          <div class="mb-4">
+            <label class="form-label fw-semibold">LLM Provider</label>
+            {{ form.llm_provider }}
+          </div>
+
+          <button type="submit" class="btn btn-primary px-4">
+            <i class="bi bi-lightning"></i> Generate Report
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-header"><i class="bi bi-info-circle"></i> What the report includes</div>
+      <div class="card-body small">
+        <ul class="mb-0 ps-3">
+          <li class="mb-1"><strong>Overview</strong> — landscape summary of the topic</li>
+          <li class="mb-1"><strong>Key Themes</strong> — recurring patterns across entries</li>
+          <li class="mb-1"><strong>Established Work</strong> — what prior literature says (citations &amp; background)</li>
+          <li class="mb-1"><strong>Active Development</strong> — your own in-progress work</li>
+          <li class="mb-1"><strong>Open Questions</strong> — gaps, tensions, ideas worth pursuing</li>
+          <li><strong>Suggested Next Steps</strong> — concrete recommended actions</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  document.querySelectorAll('input[name="entry_selection"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      document.getElementById('manual-entries').style.display =
+        radio.value === 'manual' && radio.checked ? 'block' : 'none';
+    });
+  });
+</script>
+{% endblock %}
